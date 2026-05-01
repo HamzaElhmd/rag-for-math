@@ -85,24 +85,39 @@ The project offers various components that can be run independently:
 ## Project Structure
 
 ```text
-rag-math-ml/
+rag-for-math/
 ├── app/
+│   ├── __init__.py
+│   ├── agents.py
 │   ├── backend.py
+│   ├── bm25_index.py
 │   ├── config.py
 │   ├── embeddings.py
+│   ├── encoders.py
 │   ├── frontend.py
+│   ├── mcp_server.py
 │   ├── rag_pipeline.py
-│   └── index/                  # auto-generated
+│   ├── slack_bot.py
+│   ├── slack_server.py
+│   ├── vector_db.py
+│   ├── index/                  # auto-generated
+│   │   ├── bm25_index.pkl
+│   │   └── metadata.json
+│   └── vector_db/              # auto-generated
+│       └── ...
 ├── data/
-│   ├── corpus.json
-│   └── questions.json
+│   └── ...
+├── images/
+│   ├── screenshot_1.png
+│   └── screenshot_2.png
 ├── scripts/
 │   ├── build_index.py
+│   ├── config.py
 │   ├── extract.py
-│   ├── quickstart.py
 │   └── verify.py
-├── requirements.txt
-└── README.md
+├── .gitignore
+├── README.md
+└── requirements.txt
 ```
 
 ## API Usage
