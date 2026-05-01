@@ -19,11 +19,6 @@ from app.rag_pipeline import get_tokens_num
 DEFAULT_MCP_HOST = "127.0.0.1"
 DEFAULT_MCP_PORT = 9000
 
-# Sentinel token emitted by prompts/classifiers to signal in-scope questions.
-_IN_SCOPE_TOKEN = "IN_SCOPE"
-# Sentinel emitted by the ExternalAgent prompt when it judges the question
-# off-domain. The agent converts this into a model-generated decline.
-_OUT_OF_SCOPE_TOKEN = "OUT_OF_SCOPE"
 
 # Module-level token / cost tracking for all Agent GPT calls
 _agent_chat_input_tokens = 0
@@ -134,143 +129,6 @@ class Agent:
                 if text:
                     return str(text)
         return str(tool_result)
-
-
-class ScopeGuard(Agent):
-    """Pre-flight classifier / decliner for out-of-scope questions.
-
-    Runs before any retrieval / web search so we never spend SerpAPI / scrape
-    / embedding quota on unrelated queries (weather, news, chit-chat, etc.).
-
-    A single LLM call is used to both classify and, if needed, generate the
-    natural-language refusal — so the user never sees a hardcoded string.
-    """
-
-    def __init__(self, mcp_server_ip: str = DEFAULT_MCP_HOST,
-                 mcp_server_port: int = DEFAULT_MCP_PORT):
-        super().__init__(
-            mcp_server_ip, mcp_server_port,
-            model=CHAT_MODEL,
-            temperature=0.3,
-            context_window=8000,
-        )
-
-    def classify(self, user_query: str) -> tuple[bool, str]:
-        """Classify a query and, if out of scope, produce a model-generated decline.
-
-        Returns:
-            (in_scope, decline_text). When ``in_scope`` is True, ``decline_text``
-            is an empty string. When False, ``decline_text`` holds a natural,
-            LLM-written refusal referencing the user's actual question.
-        """
-        query = (user_query or "").strip()
-        if not query:
-            # Empty input — ask the LLM for a neutral prompt rather than hardcoding.
-            return False, self._generate_empty_prompt_reply()
-
-        system_prompt = (
-            "You are the scope gate for an assistant dedicated to the textbook "
-            "'Mathematics for Machine Learning' (Deisenroth, Faisal, Ong).\n"
-            "In-scope topics: linear algebra, analytic geometry, matrix "
-            "decompositions, vector calculus, probability & statistics, "
-            "continuous optimization, and the ML methods covered there "
-            "(linear regression, PCA, Gaussian mixture models, SVMs, etc.), "
-            "including definitions, proofs, intuition, worked examples, and "
-            "related mathematical notation.\n"
-            "Out-of-scope: weather, news, sports, politics, personal chit-chat, "
-            "cooking, general programming help unrelated to the math above, or "
-            "any topic not plausibly covered by the book.\n\n"
-            "Behaviour:\n"
-            f"- If the user question is IN scope, reply with EXACTLY the token "
-            f"{_IN_SCOPE_TOKEN} and nothing else.\n"
-            "- If the user question is OUT of scope, reply with a short (1–3 "
-            "sentence) polite refusal written in natural language. Acknowledge "
-            "what they asked, explain that you only cover Mathematics for "
-            "Machine Learning, and invite them to ask something in that area. "
-            f"Do NOT include the token {_IN_SCOPE_TOKEN} anywhere in the refusal."
-        )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": query},
-        ]
-        raw = (self.request_gpt(messages=messages, max_tokens=160) or "").strip()
-
-        # Fail-open: on API errors don't block legitimate questions.
-        if raw.upper().startswith("ER"):
-            return True, ""
-
-        # Pure classifier token => in scope.
-        if raw.upper() == _IN_SCOPE_TOKEN:
-            return True, ""
-
-        # Some models append extra text; treat a leading token as in-scope
-        # only if the rest is empty / whitespace.
-        first_line = raw.splitlines()[0].strip().upper()
-        if first_line == _IN_SCOPE_TOKEN and len(raw.splitlines()) == 1:
-            return True, ""
-
-        # Otherwise treat the response as the model-generated decline.
-        # Strip any accidental leading IN_SCOPE token the model may emit.
-        decline = re.sub(rf"^{_IN_SCOPE_TOKEN}\b[:\s\-]*", "", raw, count=1).strip()
-        return False, decline or raw
-
-    def is_in_scope(self, user_query: str) -> bool:
-        """Backwards-compatible boolean helper."""
-        in_scope, _ = self.classify(user_query)
-        return in_scope
-
-    def generate_decline(self, user_query: str, reason_hint: str | None = None) -> str:
-        """Ask the model to produce a polite refusal for ``user_query``.
-
-        Used by downstream agents (External / Synthesizer) that detected the
-        question was off-domain *after* their own processing and need a
-        model-written refusal to return to the user.
-        """
-        query = (user_query or "").strip() or "(empty question)"
-        system_prompt = (
-            "You are an assistant dedicated to the textbook "
-            "'Mathematics for Machine Learning'. The user has asked something "
-            "outside that scope. Write a short (1–3 sentence), polite refusal "
-            "in natural language: briefly acknowledge what they asked, explain "
-            "you only cover Mathematics for Machine Learning (linear algebra, "
-            "calculus, probability, optimization, PCA, regression, etc.), and "
-            "invite them to ask something in that area."
-        )
-        user_parts = [f"User question: {query}"]
-        if reason_hint:
-            user_parts.append(f"Context: {reason_hint}")
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": "\n".join(user_parts)},
-        ]
-        reply = (self.request_gpt(messages=messages, max_tokens=160) or "").strip()
-        if reply.upper().startswith("ER") or not reply:
-            # Last-resort generated phrasing if the API itself fails.
-            return (
-                "That question looks to be outside what I cover. I'm focused "
-                "on Mathematics for Machine Learning — feel free to ask about "
-                "linear algebra, probability, optimization, or related ML "
-                "topics."
-            )
-        return reply
-
-    def _generate_empty_prompt_reply(self) -> str:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are an assistant dedicated to 'Mathematics for "
-                    "Machine Learning'. The user sent an empty message. "
-                    "Reply in one short, friendly sentence inviting them to "
-                    "ask a math question."
-                ),
-            },
-            {"role": "user", "content": "(empty)"},
-        ]
-        reply = (self.request_gpt(messages=messages, max_tokens=80) or "").strip()
-        if not reply or reply.upper().startswith("ER"):
-            return "Could you share a Mathematics for Machine Learning question I can help with?"
-        return reply
 
 
 class InternalAgent(Agent):
@@ -491,9 +349,8 @@ probability & statistics, continuous optimization, and related ML methods such a
 linear regression, PCA, GMM, SVM, etc.).
 
 You must:
-1. If the user question is NOT about Mathematics for Machine Learning,
-   reply with exactly the single token: {_OUT_OF_SCOPE_TOKEN}
-   and nothing else. Do not attempt to answer.
+1. If the user question is not about Mathematics for Machine Learning,
+   deny an answer for that.
 2. Otherwise, answer based only on the provided web content.
 3. Be concise and accurate.
 4. If the web content does not contain enough information to answer, say so clearly.
@@ -686,19 +543,6 @@ def agent_workflow(user_query: str, history: list | None = None, mode: str = "sy
     """
     if history is None:
         history = []
-
-    # ── Scope guardrail (runs before any retrieval / web search) ──
-    # Skip the check for follow-up turns in an ongoing conversation — the
-    # classifier can be over-eager on short clarifying messages like "why?".
-    if not history:
-        in_scope, decline_message = ScopeGuard().classify(user_query)
-        if not in_scope:
-            return {
-                "answer": decline_message,
-                "sources": [],
-                "judge_scores": {},
-                "out_of_scope": True,
-            }
 
     judge = JudgeAgent()
 

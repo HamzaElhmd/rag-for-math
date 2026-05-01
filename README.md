@@ -14,6 +14,9 @@ A Retrieval-Augmented Generation (RAG) project focused on the *Mathematics for M
 - Cost and token tracking
 - LaTeX-aware answer rendering in the UI
 
+![Screenshot 1](images/screenshot_1.png)
+![Screeenshot_2](images/screenshot_2.png)
+
 ## Installation
 
 ### Prerequisites
@@ -52,12 +55,17 @@ For a quick interactive experience with the Gradio web UI:
     python scripts/build_index.py
     ```
 
-2.  **Start the web application:**
+2.  **Start the MCP server:** (On another terminal) 
+    ```bash
+    python -m app.mcp_server
+    ```
+
+3.  **Start the web application:**
     ```bash
     python -m app.frontend
     ```
 
-3.  Open your web browser and navigate to `http://localhost:7860`.
+4.  Open your web browser and navigate to `http://localhost:7860`.
 
 ### Running Other Components
 
@@ -115,8 +123,6 @@ To use the FastAPI backend API:
 ## Slack Integration
 
 The project includes a Slack bot (`app/slack_bot.py` + `app/slack_server.py`) that integrates the multi-agent RAG pipeline with Slack's Events API. Both Socket Mode (recommended for local development) and HTTP mode are supported.
-
-Please refer to the original `README.md` (before this update) for detailed instructions on setting up the Slack app and running the bot.
 
 ## Configuration
 
